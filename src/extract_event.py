@@ -6,24 +6,15 @@ from typing import Any, Dict
 from src.utils.openai_client import run_openai
 from src.validate_event import validate_or_fix_event
 from src.utils.log import log_info, log_error
+from src.utils.metrics import incr
+from src.utils.security import attach_provenance
+from src.utils.config import load_config
 
-# Load the event extraction system prompt
 EXTRACT_PROMPT_PATH = Path("prompts/event-extraction.md")
 EXTRACT_PROMPT = EXTRACT_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 async def extract_event(source: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Extracts a structured history event from a fetched source dictionary.
-
-    Required source keys:
-      - title: str
-      - summary: str
-    Optional source keys:
-      - url: str
-      - html: str
-    """
-
     if "error" in source:
         return {"error": source["error"]}
 
@@ -48,13 +39,16 @@ Title: {event_title}
 
     try:
         raw_output = await run_openai(llm_input)
+        incr("extract.success")
     except Exception as e:
+        incr("extract.error")
         log_error(f"Extraction LLM failed: {e}")
         return {"error": str(e)}
 
     try:
         event_json = json.loads(raw_output)
     except json.JSONDecodeError:
+        incr("extract.non_json")
         log_error("LLM returned non-JSON. Attempting auto-fix.")
         event_json = {
             "title": event_title,
@@ -64,12 +58,13 @@ Title: {event_title}
         }
 
     clean_event = await validate_or_fix_event(event_json)
+    cfg = load_config()
+    clean_event = attach_provenance(clean_event, cfg.openai_model, source_url)
 
     log_info("Extraction complete.")
     return clean_event
 
 
-# -------- OPTIONAL: CLI TEST --------
 if __name__ == "__main__":
     from src.fetch_source import fetch_wikipedia_page
 

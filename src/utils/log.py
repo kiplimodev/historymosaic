@@ -1,13 +1,24 @@
 import datetime
+import json
+import os
+from typing import Any, Dict
 
 
-def log_info(message: str):
-    """Lightweight console logger for info messages."""
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[INFO] {timestamp} - {message}")
+def _emit(level: str, message: str, context: Dict[str, Any] | None = None) -> None:
+    payload = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "level": level,
+        "message": message,
+        "environment": os.getenv("ENVIRONMENT", "development"),
+    }
+    if context:
+        payload["context"] = context
+    print(json.dumps(payload, ensure_ascii=False))
 
 
-def log_error(message: str):
-    """Lightweight console logger for error messages."""
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[ERROR] {timestamp} - {message}")
+def log_info(message: str, context: Dict[str, Any] | None = None) -> None:
+    _emit("INFO", message, context)
+
+
+def log_error(message: str, context: Dict[str, Any] | None = None) -> None:
+    _emit("ERROR", message, context)
