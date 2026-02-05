@@ -60,3 +60,32 @@ python src/schedule.py
 ## Notes
 
 X posting currently supports dry-run mode (`X_DRY_RUN=true`) and a simulated posting branch for safer development and CI.
+
+## Live Testing / Production Readiness Checklist
+
+Before enabling real posting, run through this checklist:
+
+1. **Validate environment config**
+   - `cp .env.example .env` (if not already set)
+   - Set `OPENAI_API_KEY`, `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`.
+   - Keep `X_DRY_RUN=true` for first-pass tests.
+2. **Run automated checks**
+   - `pytest -q`
+3. **Run one end-to-end pipeline test**
+   - `python src/run_pipeline.py "March on Washington"`
+   - Confirm a valid event file is generated under `events/`.
+4. **Run safe autopost dry-run**
+   - `python src/autopost.py events/<event-file>.json`
+   - Verify generated content, moderation result, and payload metadata in logs.
+5. **Run scheduler in dry-run mode**
+   - `python src/schedule.py`
+   - Confirm no errors across all events.
+6. **Enable live posting intentionally**
+   - Set `X_DRY_RUN=false` only after the dry-run checks pass.
+   - Start with a single curated event, then progressively expand volume.
+
+### Recommended rollout approach
+
+- **Phase 1:** Dry-run only in production-like environment for 24h.
+- **Phase 2:** Live post 1-2 manually reviewed events.
+- **Phase 3:** Enable scheduled posting with alerts/webhook monitoring.
