@@ -1,35 +1,21 @@
 import os
+import openai
 from typing import Any, Optional
 
 from src.utils.config import load_config
+from src.utils.log import log_info
 from src.utils.metrics import incr
 from src.utils.reliability import RetryPolicy, run_with_retry
-
-_client: Optional[Any] = None
-
-
-def _get_client() -> Any:
-    global _client
-
-    if _client is None:
-        from dotenv import load_dotenv
-        from openai import OpenAI
-
-        load_dotenv()
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is not set.")
-        _client = OpenAI(api_key=api_key)
-
-    return _client
 
 
 async def run_openai(prompt: str) -> str:
     cfg = load_config()
-    client = _get_client()
+    from dotenv import load_dotenv
+    load_dotenv()
+    openai.api_key = os.getenv("OPENAI_API_KEY")
 
     def _call() -> str:
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model=cfg.openai_model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},

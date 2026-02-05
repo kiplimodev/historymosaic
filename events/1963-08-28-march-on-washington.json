@@ -1,0 +1,14 @@
+{
+  "title": "March on Washington",
+  "date": "1963-08-28",
+  "summary": "The March on Washington for Jobs and Freedom was held on August 28, 1963, in Washington, D.C., advocating for civil and economic rights of African Americans. It featured prominent speakers such as Martin Luther King Jr., who delivered the historic \"I Have a Dream\" speech. The march is credited with helping to pass the Civil Rights Act of 1964 and was one of the largest political rallies for human rights in U.S. history.",
+  "sources": [
+    "https://en.wikipedia.org/wiki/March_on_Washington"
+  ],
+  "provenance": {
+    "generated_at": "2026-02-05T18:53:21.805238+00:00",
+    "model": "gpt-4.1-mini",
+    "source_url": "https://en.wikipedia.org/wiki/March_on_Washington",
+    "pipeline": "historymosaic-v1"
+  }
+}
