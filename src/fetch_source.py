@@ -1,5 +1,4 @@
 import requests
-import json
 from bs4 import BeautifulSoup
 from src.utils.log import log_info, log_error
 

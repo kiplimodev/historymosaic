@@ -1,34 +1,6 @@
+import asyncio
 import pathlib
 import sys
-import types
-
-# Test environment may not install runtime dependencies; provide lightweight stubs.
-dotenv_stub = types.ModuleType("dotenv")
-dotenv_stub.load_dotenv = lambda *args, **kwargs: None
-sys.modules.setdefault("dotenv", dotenv_stub)
-
-openai_stub = types.ModuleType("openai")
-
-
-class _DummyCompletions:
-    def create(self, *args, **kwargs):
-        msg = types.SimpleNamespace(content='{"title":"T","date":"D","summary":"S","sources":[]}')
-        choice = types.SimpleNamespace(message=msg)
-        return types.SimpleNamespace(choices=[choice])
-
-
-class _DummyChat:
-    def __init__(self):
-        self.completions = _DummyCompletions()
-
-
-class OpenAI:
-    def __init__(self, *args, **kwargs):
-        self.chat = _DummyChat()
-
-
-openai_stub.OpenAI = OpenAI
-sys.modules.setdefault("openai", openai_stub)
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -59,6 +31,7 @@ def test_build_event_filename_uses_date_and_slugified_title():
     filename = build_event_filename({"date": "1963-08-28", "title": "March on Washington!"})
     assert filename == "1963-08-28-march-on-washington.json"
 
+
 def test_extract_event_uses_summary_field_in_prompt(monkeypatch):
     captured = {}
 
@@ -78,7 +51,6 @@ def test_extract_event_uses_summary_field_in_prompt(monkeypatch):
         "url": "https://example.com/march",
     }
 
-    import asyncio
     result = asyncio.run(extract_module.extract_event(source))
 
     assert result["title"] == "X"
