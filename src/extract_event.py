@@ -1,9 +1,9 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Any, Dict
 
 from src.utils.openai_client import run_openai
-from src.fetch_source import fetch_wikipedia_page
 from src.validate_event import validate_or_fix_event
 from src.utils.log import log_info, log_error
 
@@ -12,48 +12,57 @@ EXTRACT_PROMPT_PATH = Path("prompts/event-extraction.md")
 EXTRACT_PROMPT = EXTRACT_PROMPT_PATH.read_text(encoding="utf-8")
 
 
-async def extract_event(event_title: str):
+async def extract_event(source: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Extracts a structured history event from Wikipedia using:
-        1) Raw fetcher
-        2) Event-extraction LLM
-        3) Validator + automatic repair
+    Extracts a structured history event from a fetched source dictionary.
+
+    Required source keys:
+      - title: str
+      - summary: str
+    Optional source keys:
+      - url: str
+      - html: str
     """
+
+    if "error" in source:
+        return {"error": source["error"]}
+
+    event_title = source.get("title", "Untitled event")
+    source_summary = source.get("summary", "")
+    source_url = source.get("url", "")
 
     log_info(f"Starting extraction for: {event_title}")
 
-    # --- 1. FETCH WIKIPEDIA ---
-    wiki_text = fetch_wikipedia_page(event_title)
-    if "error" in wiki_text:
-        log_error(f"Failed to fetch base text: {wiki_text['error']}")
-        return {"error": wiki_text["error"]}
-
-    # --- 2. COMPOSE LLM INPUT ---
     llm_input = f"""
 {EXTRACT_PROMPT}
 
 ### EVENT REQUEST
 Title: {event_title}
 
+### SOURCE URL
+{source_url}
+
 ### SOURCE TEXT
-{wiki_text.get("extract", "")}
+{source_summary}
 """
 
-    # --- 3. RUN EXTRACTION MODEL ---
     try:
         raw_output = await run_openai(llm_input)
     except Exception as e:
         log_error(f"Extraction LLM failed: {e}")
         return {"error": str(e)}
 
-    # --- 4. PARSE LLM OUTPUT ---
     try:
         event_json = json.loads(raw_output)
     except json.JSONDecodeError:
         log_error("LLM returned non-JSON. Attempting auto-fix.")
-        event_json = {"title": event_title, "raw_output": raw_output}
+        event_json = {
+            "title": event_title,
+            "summary": source_summary,
+            "sources": [source_url] if source_url else [],
+            "raw_output": raw_output,
+        }
 
-    # --- 5. VALIDATE & AUTO-REPAIR ---
     clean_event = await validate_or_fix_event(event_json)
 
     log_info("Extraction complete.")
@@ -62,5 +71,8 @@ Title: {event_title}
 
 # -------- OPTIONAL: CLI TEST --------
 if __name__ == "__main__":
-    event = asyncio.run(extract_event("March on Washington"))
+    from src.fetch_source import fetch_wikipedia_page
+
+    source = fetch_wikipedia_page("March on Washington")
+    event = asyncio.run(extract_event(source))
     print(json.dumps(event, indent=2))

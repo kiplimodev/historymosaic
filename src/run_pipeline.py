@@ -33,6 +33,10 @@ async def run(query: str):
     # 2. Extract event (LLM or fallback)
     # -----------------------------------
     event = await extract_event(source)
+    if "error" in event:
+        log_error(f"Event extraction failed: {event['error']}")
+        return
+
     log_info("Extracted event dictionary.")
 
     # -----------------------------------
