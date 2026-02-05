@@ -1,15 +1,13 @@
 import json
 from typing import Dict, Any
+
+from src.utils.alerts import send_alert
 from src.utils.log import log_info, log_error
+from src.utils.metrics import incr
 from src.utils.openai_client import run_openai
 
 
-# --------------------------------------------
-# 1. STRICT SCHEMA VALIDATION
-# --------------------------------------------
 def validate_event_schema(event: Dict[str, Any]) -> bool:
-    """Check that event follows the required schema."""
-
     required_fields = {
         "title": str,
         "date": str,
@@ -21,12 +19,11 @@ def validate_event_schema(event: Dict[str, Any]) -> bool:
         if field not in event:
             log_error(f"Missing field: {field}")
             return False
-        
+
         if not isinstance(event[field], field_type):
             log_error(f"Wrong type for field '{field}': expected {field_type}, got {type(event[field])}")
             return False
 
-    # Additional check: sources must be list of strings
     if any(not isinstance(src, str) for src in event["sources"]):
         log_error("All items in 'sources' must be strings.")
         return False
@@ -34,15 +31,7 @@ def validate_event_schema(event: Dict[str, Any]) -> bool:
     return True
 
 
-# --------------------------------------------
-# 2. LLM AUTO-REPAIR
-# --------------------------------------------
 async def llm_fix_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Ask the LLM to fix the event JSON to match required schema.
-    Returns ONLY valid JSON.
-    """
-
     prompt = f"""
 You are a JSON validation engine.
 Fix this event so that it has exactly the fields:
@@ -64,30 +53,29 @@ Return ONLY corrected JSON. No backticks. No explanations.
     try:
         cleaned = json.loads(response)
         log_info("LLM successfully fixed the event.")
+        incr("validate.repair_success")
         return cleaned
     except json.JSONDecodeError:
+        incr("validate.repair_failed")
         log_error("LLM returned invalid JSON. Using original event.")
         return event
 
 
-# --------------------------------------------
-# 3. VALIDATE OR AUTO-FIX PIPELINE
-# --------------------------------------------
 async def validate_or_fix_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Validate the event. If invalid, try automatic LLM repair.
-    """
-
     if validate_event_schema(event):
+        incr("validate.success")
         log_info("Event passed schema validation.")
         return event
 
+    incr("validate.failed")
     log_info("Event failed validation — attempting LLM repair...")
     repaired = await llm_fix_event(event)
 
     if validate_event_schema(repaired):
+        incr("validate.repair_valid")
         log_info("Repaired event passed validation.")
         return repaired
 
+    send_alert("event_validation_failure", {"event": event})
     log_error("Repaired event still invalid — returning original event.")
     return event

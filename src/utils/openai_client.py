@@ -1,31 +1,21 @@
 import os
-from typing import Optional
+from typing import Any, Optional
 
-try:
-    from dotenv import load_dotenv
-except ImportError:  # optional in some test/runtime contexts
-    load_dotenv = None
+from src.utils.config import load_config
+from src.utils.metrics import incr
+from src.utils.reliability import RetryPolicy, run_with_retry
 
-try:
-    from openai import OpenAI
-except ImportError:  # optional until LLM call-time
-    OpenAI = None
-
-if load_dotenv:
-    load_dotenv()
-
-_client: Optional["OpenAI"] = None
+_client: Optional[Any] = None
 
 
-def _get_client() -> "OpenAI":
+def _get_client() -> Any:
     global _client
 
-    if OpenAI is None:
-        raise RuntimeError(
-            "openai package is not installed. Install dependencies before running LLM features."
-        )
-
     if _client is None:
+        from dotenv import load_dotenv
+        from openai import OpenAI
+
+        load_dotenv()
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is not set.")
@@ -35,12 +25,25 @@ def _get_client() -> "OpenAI":
 
 
 async def run_openai(prompt: str) -> str:
+    cfg = load_config()
     client = _get_client()
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt},
-        ],
+
+    def _call() -> str:
+        response = client.chat.completions.create(
+            model=cfg.openai_model,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            timeout=cfg.openai_timeout_seconds,
+        )
+        content = response.choices[0].message.content
+        return content or ""
+
+    result = run_with_retry(
+        "openai_chat_completion",
+        _call,
+        RetryPolicy(max_attempts=cfg.openai_max_retries, initial_delay_seconds=0.5),
     )
-    return response.choices[0].message.content
+    incr("openai.calls")
+    return result
