@@ -7,6 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from src.autopost import run_autopost
 from src.utils.log import log_info, log_error
+from src.utils.alert import send_alert
 
 load_dotenv()
 
@@ -28,7 +29,9 @@ def job() -> None:
     try:
         asyncio.run(run_autopost())
     except Exception as e:
-        log_error(f"Autopost job raised an unexpected error: {e}")
+        msg = f"Autopost job raised an unexpected error: {e}"
+        log_error(msg)
+        send_alert(f"CRITICAL: {msg}")
 
 
 def start() -> None:
