@@ -5,7 +5,7 @@ from typing import Dict
 
 from src.utils.openai_client import run_openai
 from src.validate_event import validate_or_fix_event
-from src.utils.log import log_info, log_error
+from src.utils.log import log_info, log_warning, log_error
 
 REWRITE_PROMPT_PATH = Path("prompts/rewrite-for-x.md")
 
@@ -29,8 +29,24 @@ async def rewrite_for_x(event: Dict[str, any]) -> str:
 
     try:
         rewritten = await run_openai(prompt)
+        tweet = rewritten.strip()
+
+        # Enforce 280-char hard limit — retry once with explicit feedback
+        if len(tweet) > 280:
+            log_warning(f"Tweet too long ({len(tweet)} chars) — retrying with stricter prompt.")
+            retry_prompt = (
+                f"{prompt}\n\n"
+                f"IMPORTANT: Your previous attempt was {len(tweet)} characters, which exceeds the 280-character X limit.\n"
+                f"Rewrite it again. It MUST be under 260 characters total (including hashtags). No exceptions."
+            )
+            rewritten = await run_openai(retry_prompt)
+            tweet = rewritten.strip()
+            if len(tweet) > 280:
+                log_warning(f"Retry still too long ({len(tweet)} chars) — truncating.")
+                tweet = tweet[:277] + "..."
+
         log_info("Rewrite complete.")
-        return rewritten.strip()
+        return tweet
 
     except Exception as e:
         log_error(f"Rewrite failed: {e}")

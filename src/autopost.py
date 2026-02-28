@@ -8,6 +8,8 @@ from typing import Optional
 from src.validate_event import validate_or_fix_event
 from src.rewrite_x import rewrite_for_x
 from src.post_to_x import post_tweet
+from src.fetch_onthisday import fetch_onthisday_event
+from src.extract_event import extract_event
 from src.utils.log import log_info, log_warning, log_error
 from src.utils.alert import send_alert
 
@@ -31,7 +33,7 @@ DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 # --------------------------------------------------
 
 def load_posted_log() -> list[str]:
-    """Return the list of already-posted event filenames."""
+    """Return the list of already-posted event titles/filenames."""
     if not POSTED_LOG.exists():
         return []
     try:
@@ -47,24 +49,22 @@ def save_posted_log(posted: list[str]) -> None:
 
 
 # --------------------------------------------------
-# Event selection
+# Seed event fallback
 # --------------------------------------------------
 
-def pick_next_event(posted: list[str]) -> Optional[Path]:
+def pick_next_seed_event(posted: list[str]) -> Optional[Path]:
     """
-    Return the Path of the next unposted event JSON file,
+    Return the next unposted seed event JSON file,
     sorted chronologically by filename (YYYY-MM-DD-slug.json).
-    Returns None if all events have been posted.
+    Returns None if all seed events have been posted.
     """
     all_events = sorted(
         p for p in EVENTS_DIR.glob("*.json")
         if p.name != POSTED_LOG.name
     )
-
     for path in all_events:
         if path.name not in posted:
             return path
-
     return None
 
 
@@ -75,11 +75,12 @@ def pick_next_event(posted: list[str]) -> Optional[Path]:
 async def run_autopost() -> None:
     """
     Full autopost pipeline:
-      1. Pick next unposted event
-      2. Validate it
-      3. Rewrite for X
-      4. Post to X (or dry-run)
-      5. Mark as posted
+      1. Try live fetch from Wikipedia On This Day
+      2. If live fetch fails, fall back to next seed event
+      3. Validate the event
+      4. Rewrite for X
+      5. Post to X (or dry-run)
+      6. Mark as posted
     """
     log_info("--- Autopost cycle starting ---")
 
@@ -87,54 +88,86 @@ async def run_autopost() -> None:
         log_info("DRY RUN mode — tweets will be generated but not posted.")
 
     posted = load_posted_log()
-    event_path = pick_next_event(posted)
+    event = None
+    post_key = None  # What we store in posted log to prevent duplicates
 
-    if event_path is None:
-        msg = "No unposted events remaining. Add more events to continue posting."
-        log_warning(msg)
-        send_alert(f"WARNING: {msg}")
-        return
+    # --------------------------------------------------
+    # 1. Try live fetch
+    # --------------------------------------------------
+    log_info("Attempting live fetch from Wikipedia On This Day...")
+    source = fetch_onthisday_event()
 
-    log_info(f"Selected event: {event_path.name}")
+    if "error" not in source:
+        # Check if we already posted this title today
+        post_key = source["title"]
+        if post_key in posted:
+            log_info(f"Already posted '{post_key}' — trying seed fallback.")
+        else:
+            log_info(f"Live event fetched: {source.get('year', '')} — {source['title']}")
+            event = await extract_event(source)
+            if "error" in event:
+                log_warning(f"Live extraction failed: {event['error']} — falling back to seed.")
+                event = None
+    else:
+        log_warning(f"Live fetch failed: {source['error']} — falling back to seed.")
 
-    # --- Load event ---
-    try:
-        event = json.loads(event_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        msg = f"Failed to load {event_path.name}: {e}"
-        log_error(msg)
-        send_alert(f"ERROR: {msg}")
-        return
+    # --------------------------------------------------
+    # 2. Fall back to seed events if live failed
+    # --------------------------------------------------
+    if event is None:
+        seed_path = pick_next_seed_event(posted)
 
-    # --- Validate ---
-    event = await validate_or_fix_event(event)
+        if seed_path is None:
+            msg = "No unposted events remaining (live fetch failed and seed events exhausted)."
+            log_warning(msg)
+            send_alert(f"WARNING: {msg}")
+            return
 
-    # --- Rewrite for X ---
+        log_info(f"Using seed event: {seed_path.name}")
+        try:
+            event = json.loads(seed_path.read_text(encoding="utf-8"))
+            post_key = seed_path.name
+        except (json.JSONDecodeError, OSError) as e:
+            msg = f"Failed to load seed event {seed_path.name}: {e}"
+            log_error(msg)
+            send_alert(f"ERROR: {msg}")
+            return
+
+        # Validate seed events (live events are validated inside extract_event)
+        event = await validate_or_fix_event(event)
+
+    # --------------------------------------------------
+    # 3. Rewrite for X
+    # --------------------------------------------------
     tweet = await rewrite_for_x(event)
 
     if tweet.startswith("ERROR"):
-        msg = f"Rewrite failed for {event_path.name} — skipping."
+        msg = f"Rewrite failed for '{post_key}' — skipping."
         log_error(msg)
         send_alert(f"ERROR: {msg}")
         return
 
     log_info(f"Tweet ready ({len(tweet)} chars): {tweet[:80]}...")
 
-    # --- Dry run: print and stop ---
+    # --------------------------------------------------
+    # 5. Dry run
+    # --------------------------------------------------
     if DRY_RUN:
         log_info(f"[DRY RUN] Would have posted:\n{tweet}")
         log_info("--- Autopost cycle complete (dry run) ---")
         return
 
-    # --- Post to X ---
+    # --------------------------------------------------
+    # 6. Post to X
+    # --------------------------------------------------
     result = post_tweet(tweet)
 
     if result["success"]:
-        posted.append(event_path.name)
+        posted.append(post_key)
         save_posted_log(posted)
-        log_info(f"Posted and logged: {event_path.name} (tweet ID: {result['tweet_id']})")
+        log_info(f"Posted and logged: '{post_key}' (tweet ID: {result['tweet_id']})")
     else:
-        msg = f"Post failed for {event_path.name}: {result.get('detail', 'unknown error')}"
+        msg = f"Post failed for '{post_key}': {result.get('detail', 'unknown error')}"
         log_error(msg)
         send_alert(f"ERROR: {msg}")
 

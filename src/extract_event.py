@@ -32,11 +32,14 @@ async def extract_event(event_title: str):
         return {"error": wiki_text["error"]}
 
     # --- 2. COMPOSE LLM INPUT ---
+    year = event_title.get("year", "") if isinstance(event_title, dict) else ""
+    year_line = f"Year: {year}\n" if year else ""
+
     llm_input = f"""
 {EXTRACT_PROMPT}
 
 ### EVENT REQUEST
-Title: {title}
+{year_line}Title: {title}
 
 ### SOURCE TEXT
 {wiki_text.get("summary", "")}
